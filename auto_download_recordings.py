@@ -18,7 +18,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 import requests
@@ -72,27 +72,6 @@ def make_filename(url: str) -> str:
         return "_".join(parts[-2:]) + ".ogg"
 
 
-def extract_real_url(raw: str) -> str:
-    """Unwrap ProofPoint / SafeLinks / urldefense.com URLs to get the real link."""
-    raw = raw.strip()
-    if "urldefense.com" in raw:
-        # Format: urldefense.com/v3/__REAL_URL__;ENCODED_CHARS!JUNK$
-        m = re.search(r"urldefense\.com/v3/__(.+?)__;", raw)
-        if m:
-            encoded = m.group(1)
-            # Replace encoded special chars used by ProofPoint v3
-            decoded = (encoded
-                .replace("*40", "@")
-                .replace("*3A", ":")
-                .replace("*2F", "/")
-                .replace("*3F", "?")
-                .replace("*3D", "=")
-                .replace("*26", "&")
-                .replace("*25", "%"))
-            return decoded
-    return raw
-
-
 # ── Login ──────────────────────────────────────────────────────────────────────
 
 def login(page: Page):
@@ -113,25 +92,12 @@ def login(page: Page):
     print("\n" + "=" * 60)
     print("  STEP 2 — In your inbox:")
     print("    a) Find the email from LiveKit")
-    print("    b) Right-click the sign-in link → 'Copy link address'")
-    print("    c) Paste it below  (urldefense.com links work fine)")
+    print("    b) Copy the sign-in link address")
+    print("    c) Paste it into the address bar of the browser window")
+    print("       that this tool opened, then press Enter to navigate")
+    print("    d) Click 'Confirm login' (or 'Continue') in that browser")
     print("=" * 60)
-    raw = input("\n  Paste the link here: ").strip()
-
-    # Unwrap ProofPoint / urldefense.com — navigating directly avoids the
-    # JavaScript redirect that hangs in the Playwright browser
-    url = extract_real_url(raw)
-    print(f"\n  Navigating to magic link in the browser...")
-    page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-
-    print("\n" + "=" * 60)
-    print("  The browser may be showing a 'Continue' or 'Sign in' button.")
-    print("  If so, click it in the browser window.")
-    print("")
-    print("  Once you are fully logged in and see the LiveKit dashboard,")
-    print("  come back here and press Enter.")
-    print("=" * 60)
-    input("\n  Press Enter when you are logged in: ")
+    input("\n  Press Enter here once you have confirmed the login in the browser: ")
 
     print("  Login complete.\n")
 
