@@ -1,0 +1,29 @@
+# Environment / secrets
+.env
+*.env
+
+# Claude Code folders
+.claude/
+
+# Browser session state (contains auth cookies)
+.browser_state.json
+
+# Runtime / progress files
+.progress.json
+api_responses.log
+recordings_manifest.jsonl
+
+# Output directory
+recordings_output/
+
+# Python virtual environment
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS junk
+.DS_Store
+Thumbs.db
