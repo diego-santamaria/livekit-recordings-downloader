@@ -13,8 +13,9 @@
 api_responses.log
 recordings_manifest.jsonl
 
-# Output directory
+# Output directories
 recordings_output/
+recordings_output.backup/
 
 # Python virtual environment
 .venv/

@@ -18,7 +18,8 @@ import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from datetime import datetime
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 import requests
@@ -58,18 +59,67 @@ def deep_find_urls(obj, found: set):
             deep_find_urls(item, found)
 
 
-def make_filename(url: str) -> str:
-    path = urlparse(url).path.rstrip("/")
-    parts = path.split("/")
+def _safe_name(s: str) -> str:
+    """Sanitize a string for use in a file/folder name."""
+    return re.sub(r'[^\w.-]', '_', s).strip('_')
+
+
+def get_session_metadata(page: Page, session_id: str) -> tuple[str, datetime | None]:
+    """Navigate to the session detail page and extract room name + start time."""
+    detail_url = f"{BASE_URL}/{session_id}"
     try:
-        idx = next(i for i, p in enumerate(parts) if p == "recordings")
-        after = parts[idx + 1:]
-        date    = "".join(after[:3])
-        room_id = after[4] if len(after) > 4 else "room"
-        ftype   = after[5] if len(after) > 5 else "recording"
-        return f"{date}_{room_id}_{ftype}.ogg"
-    except (StopIteration, IndexError):
-        return "_".join(parts[-2:]) + ".ogg"
+        page.goto(detail_url, wait_until="networkidle", timeout=15_000)
+    except Exception:
+        pass
+
+    result = page.evaluate("""
+        () => {
+            function valueAfter(labelPattern) {
+                for (const el of document.querySelectorAll('*')) {
+                    if (el.children.length > 0) continue;
+                    const txt = el.textContent.trim();
+                    if (!labelPattern.test(txt)) continue;
+                    const sib = el.nextElementSibling
+                        || el.parentElement?.nextElementSibling;
+                    if (sib) return sib.textContent.trim();
+                }
+                return '';
+            }
+            function findCallPrefix() {
+                for (const el of document.querySelectorAll('*')) {
+                    if (el.children.length > 0) continue;
+                    const txt = el.textContent.trim();
+                    if (/^call-_/i.test(txt)) return txt;
+                }
+                return '';
+            }
+            function findDatetime() {
+                const pattern = /^[A-Z][a-z]{2}\\s+\\d{1,2},\\s+\\d{4},\\s+\\d{1,2}:\\d{2}:\\d{2}\\s+[AP]M$/;
+                for (const el of document.querySelectorAll('*')) {
+                    if (el.children.length > 0) continue;
+                    const txt = el.textContent.trim();
+                    if (pattern.test(txt)) return txt;
+                }
+                return '';
+            }
+            const nameByLabel = valueAfter(/^(room\\s*name|session\\s*name)$/i);
+            const startByLabel = valueAfter(/^start\\s*time$/i);
+            return {
+                name:  nameByLabel || findCallPrefix(),
+                start: startByLabel || findDatetime(),
+            };
+        }
+    """)
+
+    room_name = result.get("name", "")
+    start_str = result.get("start", "")
+    print(f"    [debug] raw name='{room_name}'  raw start='{start_str}'")
+    dt = None
+    try:
+        dt = datetime.strptime(start_str.strip(), "%b %d, %Y, %I:%M:%S %p")
+    except (ValueError, AttributeError):
+        pass
+    return room_name, dt
 
 
 def extract_real_url(raw: str) -> str:
@@ -378,6 +428,21 @@ def collect_and_download(page: Page, out_dir: Path, http: requests.Session) -> d
             stats["skipped"] += 1
             continue
 
+        # Fetch room name and start time from the session detail page
+        room_name, dt = get_session_metadata(page, room_id)
+        safe_rn = _safe_name(room_name) if room_name else room_id
+
+        # Build subfolder: YYYY/MM/DD/HH
+        if dt:
+            subfolder = (
+                Path(dt.strftime("%Y")) / dt.strftime("%m")
+                / dt.strftime("%d") / dt.strftime("%H")
+            )
+        else:
+            subfolder = Path("unknown")
+
+        print(f"  {prefix} — room: {room_name or '?'}  start: {dt or '?'}")
+
         current_urls.clear()
         obs_url = f"{BASE_URL}/{room_id}/observability"
 
@@ -396,12 +461,12 @@ def collect_and_download(page: Page, out_dir: Path, http: requests.Session) -> d
             seen_paths.add(path)
             stats["found"] += 1
 
-            fname = make_filename(url)
-            out_path = out_dir / fname
+            fname = f"{room_id}.{safe_rn}.ogg"
+            out_path = out_dir / subfolder / fname
 
             # Append to manifest immediately
             with open(manifest_path, "a", encoding="utf-8") as mf:
-                mf.write(json.dumps({"url": url, "filename": fname, "room_id": room_id}) + "\n")
+                mf.write(json.dumps({"url": url, "filename": str(out_path.relative_to(out_dir)), "room_id": room_id, "room_name": room_name}) + "\n")
 
             if out_path.exists():
                 print(f"  {prefix} — already downloaded: {fname}")
