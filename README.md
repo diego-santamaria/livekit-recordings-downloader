@@ -29,36 +29,42 @@ LIVEKIT_PROJECT_ID=p_xxxxxxxxxxxxxxx   # visible in your LiveKit Cloud project U
 
 ## Usage
 
-### First run (login required)
+### Windows shortcuts (recommended)
+
+Double-click the shortcuts on the Desktop:
+
+| Shortcut | What it does |
+|----------|-------------|
+| `Renew LiveKit Session.bat` | Log in and save session (no downloading) |
+| `Download Colonial Casey.bat` | Download recordings for the Casey project |
+| `Download Colonial Sarah.bat` | Download recordings for the Sarah project |
+
+### Command line
+
+The script automatically reuses a saved session (`.browser_state.json`) if one
+exists. If the session is missing or expired it runs the magic-link login flow
+and saves a fresh session — no flags needed.
 
 ```bash
+# Run for the project set in .env
 python auto_download_recordings.py
+
+# Run for a specific project
+python auto_download_recordings.py --project-id p_xxxxxxx
+
+# Login and save session only — no downloading (useful to pre-seed across projects)
+python auto_download_recordings.py --login-only
+
+# Custom output folder
+python auto_download_recordings.py --output-dir custom_folder
 ```
 
-The script will prompt you to:
+The login flow will prompt you to:
 1. Type your email in the browser and click **Continue with email**.
-2. Copy the magic-link from your inbox and paste it in the terminal.
+2. Copy the magic-link from your inbox and paste it into the browser.
 3. Complete the sign-in in the browser, then press Enter.
 
-Your session is saved to `.browser_state.json` for future runs.
-
-### Subsequent runs (skip login)
-
-```bash
-python auto_download_recordings.py --skip-login
-```
-
-If the saved session has expired the script will tell you to re-run without
-`--skip-login`.
-
-### Custom output folder (optional)
-
-By default the output folder is `recordings_output/<LIVEKIT_PROJECT_ID>`. You
-can override it:
-
-```bash
-python auto_download_recordings.py --output-dir custom_folder --skip-login
-```
+Your session is saved to `.browser_state.json` and shared across all projects.
 
 ## Output structure
 
