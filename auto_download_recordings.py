@@ -7,8 +7,9 @@ Only manual step: pasting the magic-link URL once (first run only).
 Everything else is fully automated.
 
 Usage:
-  python auto_download_recordings.py --output-dir recordings_output
-  python auto_download_recordings.py --output-dir recordings_output --skip-login
+  python auto_download_recordings.py
+  python auto_download_recordings.py --skip-login
+  python auto_download_recordings.py --output-dir custom_folder --skip-login
 """
 
 import argparse
@@ -38,7 +39,6 @@ if not EMAIL or not PROJECT_ID:
 
 SESSIONS_URL = f"https://cloud.livekit.io/projects/{PROJECT_ID}/sessions"
 STATE_FILE  = Path(__file__).parent / ".browser_state.json"
-API_LOG     = Path(__file__).parent / "api_responses.log"
 
 OCI_PATTERN = re.compile(
     r"https://[^\"'\s]*objectstorage\.[^\"'\s]*oraclecloud\.com[^\"'\s]*recordings[^\"'\s]*",
@@ -154,7 +154,6 @@ def login(page: Page):
 
 # ── Session + recording discovery ─────────────────────────────────────────────
 
-PROGRESS_FILE = Path(__file__).parent / ".progress.json"
 BASE_URL = f"https://cloud.livekit.io/projects/{PROJECT_ID}/sessions"
 
 
@@ -341,13 +340,14 @@ def collect_and_download(page: Page, out_dir: Path, http: requests.Session) -> d
     Every discovered URL is also appended to recordings_manifest.jsonl.
     """
     stats = {"found": 0, "downloaded": 0, "skipped": 0, "failed": 0}
-    manifest_path = Path(__file__).parent / "recordings_manifest.jsonl"
+    progress_file = out_dir / ".progress.json"
+    manifest_path = out_dir / "recordings_manifest.jsonl"
 
     # Load progress from a previous run (supports resume)
     done: set[str] = set()
-    if PROGRESS_FILE.exists():
+    if progress_file.exists():
         try:
-            done = set(json.loads(PROGRESS_FILE.read_text()))
+            done = set(json.loads(progress_file.read_text()))
             print(f"  Resuming — {len(done)} session(s) already processed.\n")
         except Exception:
             pass
@@ -450,7 +450,7 @@ def collect_and_download(page: Page, out_dir: Path, http: requests.Session) -> d
 
         # Mark session as done and save progress
         done.add(room_id)
-        PROGRESS_FILE.write_text(json.dumps(list(done)))
+        progress_file.write_text(json.dumps(list(done)))
 
     return stats
 
@@ -485,7 +485,8 @@ def download_file(session: requests.Session, url: str, out_path: Path, retries: 
 
 def main():
     parser = argparse.ArgumentParser(description="Download all LiveKit Cloud recordings")
-    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--output-dir", default=f"recordings_output/{PROJECT_ID}",
+                        help="Output folder (default: recordings_output/<LIVEKIT_PROJECT_ID>)")
     parser.add_argument("--skip-login", action="store_true",
                         help="Reuse saved browser session (skip magic-link step)")
     args = parser.parse_args()
@@ -533,7 +534,7 @@ def main():
     print(f"  Failed:                {stats['failed']}")
     print("=" * 60)
     print(f"\nFiles saved to: {out_dir.resolve()}")
-    print(f"Progress saved to {PROGRESS_FILE} — re-run anytime to resume.")
+    print(f"Progress saved to {out_dir / '.progress.json'} — re-run anytime to resume.")
 
 
 if __name__ == "__main__":

@@ -8,12 +8,7 @@
 # Browser session state (contains auth cookies)
 .browser_state.json
 
-# Runtime / progress files
-.progress.json
-api_responses.log
-recordings_manifest.jsonl
-
-# Output directories
+# Output directories (all project downloads live here)
 recordings_output/
 recordings_output.backup/
 
