@@ -29,16 +29,6 @@ LIVEKIT_PROJECT_ID=p_xxxxxxxxxxxxxxx   # visible in your LiveKit Cloud project U
 
 ## Usage
 
-### Windows shortcuts (recommended)
-
-Double-click the shortcuts on the Desktop:
-
-| Shortcut | What it does |
-|----------|-------------|
-| `Renew LiveKit Session.bat` | Log in and save session (no downloading) |
-| `Download Colonial Casey.bat` | Download recordings for the Casey project |
-| `Download Colonial Sarah.bat` | Download recordings for the Sarah project |
-
 ### Command line
 
 The script automatically reuses a saved session (`.browser_state.json`) if one
