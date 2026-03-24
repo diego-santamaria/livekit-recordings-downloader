@@ -6,7 +6,7 @@
 .claude/
 
 # Browser session state (contains auth cookies)
-.browser_state.json
+.browser_state*.json
 
 # Output directories (all project downloads live here)
 recordings_output/

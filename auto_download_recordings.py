@@ -8,8 +8,13 @@ Everything else is fully automated.
 
 Usage:
   python auto_download_recordings.py
-  python auto_download_recordings.py --skip-login
-  python auto_download_recordings.py --output-dir custom_folder --skip-login
+  python auto_download_recordings.py --login-only
+  python auto_download_recordings.py --project-id p_xxxxxxx
+  python auto_download_recordings.py --output-dir custom_folder
+
+The script automatically reuses a saved browser session (.browser_state.json) when
+available. If the session is missing or expired it runs the magic-link login flow
+and saves a fresh session for next time.
 """
 
 import argparse
@@ -32,13 +37,10 @@ load_dotenv()
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 EMAIL      = os.environ.get("LIVEKIT_EMAIL", "")
-PROJECT_ID = os.environ.get("LIVEKIT_PROJECT_ID", "")
+_ENV_PROJECT_ID = os.environ.get("LIVEKIT_PROJECT_ID", "")
 
-if not EMAIL or not PROJECT_ID:
-    sys.exit("Error: set LIVEKIT_EMAIL and LIVEKIT_PROJECT_ID in your .env file.")
-
-SESSIONS_URL = f"https://cloud.livekit.io/projects/{PROJECT_ID}/sessions"
-STATE_FILE  = Path(__file__).parent / ".browser_state.json"
+if not EMAIL:
+    sys.exit("Error: set LIVEKIT_EMAIL in your .env file.")
 
 OCI_PATTERN = re.compile(
     r"https://[^\"'\s]*objectstorage\.[^\"'\s]*oraclecloud\.com[^\"'\s]*recordings[^\"'\s]*",
@@ -64,9 +66,9 @@ def _safe_name(s: str) -> str:
     return re.sub(r'[^\w.-]', '_', s).strip('_')
 
 
-def get_session_metadata(page: Page, session_id: str) -> tuple[str, datetime | None]:
+def get_session_metadata(page: Page, session_id: str, project_id: str) -> tuple[str, datetime | None]:
     """Navigate to the session detail page and extract room name + start time."""
-    detail_url = f"{BASE_URL}/{session_id}"
+    detail_url = f"https://cloud.livekit.io/projects/{project_id}/sessions/{session_id}"
     try:
         page.goto(detail_url, wait_until="networkidle", timeout=15_000)
     except Exception:
@@ -124,10 +126,10 @@ def get_session_metadata(page: Page, session_id: str) -> tuple[str, datetime | N
 
 # ── Login ──────────────────────────────────────────────────────────────────────
 
-def login(page: Page):
+def login(page: Page, project_id: str):
     page.goto("https://cloud.livekit.io/login", wait_until="domcontentloaded", timeout=30_000)
 
-    if f"/projects/{PROJECT_ID}" in page.url:
+    if f"/projects/{project_id}" in page.url:
         print("Already logged in.\n")
         return
 
@@ -154,10 +156,7 @@ def login(page: Page):
 
 # ── Session + recording discovery ─────────────────────────────────────────────
 
-BASE_URL = f"https://cloud.livekit.io/projects/{PROJECT_ID}/sessions"
-
-
-def sessions_url_60days() -> str:
+def sessions_url_60days(project_id: str) -> str:
     """Build the sessions URL with the 'Past 60 days' filter.
 
     The opq param is a fixed base64 query (sort by started_at DESC).
@@ -167,16 +166,16 @@ def sessions_url_60days() -> str:
     start_ms = now_ms - (60 * 24 * 60 * 60 * 1000)
     opq = "WygnYSEzfmIhKCdjISdzdGFydGVkX2F0J35kISdERVNDJ35lISgpKSldXw=="
     return (
-        f"https://cloud.livekit.io/projects/{PROJECT_ID}/sessions"
+        f"https://cloud.livekit.io/projects/{project_id}/sessions"
         f"?opq={opq}&start={start_ms}&end={now_ms}"
     )
 
 
-def get_session_ids(page: Page) -> list[str]:
+def get_session_ids(page: Page, project_id: str) -> list[str]:
     """Collect all room IDs from the sessions list, paginating until done."""
     session_ids: list[str] = []
 
-    url = sessions_url_60days()
+    url = sessions_url_60days(project_id)
     print(f"  Loading sessions with 'Past 60 days' filter...")
     page.goto(url, wait_until="networkidle", timeout=30_000)
 
@@ -332,7 +331,7 @@ def get_session_ids(page: Page) -> list[str]:
     return session_ids
 
 
-def collect_and_download(page: Page, out_dir: Path, http: requests.Session) -> dict:
+def collect_and_download(page: Page, out_dir: Path, http: requests.Session, project_id: str) -> dict:
     """Visit each session's /observability page, capture the OCI pre-signed URL,
     and download the recording immediately (before the 30-min expiry).
 
@@ -377,7 +376,7 @@ def collect_and_download(page: Page, out_dir: Path, http: requests.Session) -> d
 
     # Step 1 — collect all session IDs
     print("Collecting session IDs...")
-    session_ids = get_session_ids(page)
+    session_ids = get_session_ids(page, project_id)
 
     if not session_ids:
         print("  No sessions found. Make sure you are logged in.")
@@ -395,7 +394,7 @@ def collect_and_download(page: Page, out_dir: Path, http: requests.Session) -> d
             continue
 
         # Fetch room name and start time from the session detail page
-        room_name, dt = get_session_metadata(page, room_id)
+        room_name, dt = get_session_metadata(page, room_id, project_id)
         safe_rn = _safe_name(room_name) if room_name else room_id
 
         # Build subfolder: YYYY/MM/DD/HH
@@ -410,7 +409,8 @@ def collect_and_download(page: Page, out_dir: Path, http: requests.Session) -> d
         print(f"  {prefix} — room: {room_name or '?'}  start: {dt or '?'}")
 
         current_urls.clear()
-        obs_url = f"{BASE_URL}/{room_id}/observability"
+        base_url = f"https://cloud.livekit.io/projects/{project_id}/sessions"
+        obs_url = f"{base_url}/{room_id}/observability"
 
         try:
             page.goto(obs_url, wait_until="networkidle", timeout=15_000)
@@ -485,38 +485,52 @@ def download_file(session: requests.Session, url: str, out_path: Path, retries: 
 
 def main():
     parser = argparse.ArgumentParser(description="Download all LiveKit Cloud recordings")
-    parser.add_argument("--output-dir", default=f"recordings_output/{PROJECT_ID}",
-                        help="Output folder (default: recordings_output/<LIVEKIT_PROJECT_ID>)")
-    parser.add_argument("--skip-login", action="store_true",
-                        help="Reuse saved browser session (skip magic-link step)")
+    parser.add_argument("--project-id", default=_ENV_PROJECT_ID,
+                        help="LiveKit project ID (default: LIVEKIT_PROJECT_ID from .env)")
+    parser.add_argument("--output-dir", default=None,
+                        help="Output folder (default: recordings_output/<project-id>)")
+    parser.add_argument("--login-only", action="store_true",
+                        help="Only perform login and save the session, then exit (no downloading)")
     args = parser.parse_args()
 
-    out_dir = Path(args.output_dir)
+    project_id = args.project_id
+    if not project_id:
+        sys.exit("Error: set LIVEKIT_PROJECT_ID in your .env file or pass --project-id.")
+
+    out_dir = Path(args.output_dir) if args.output_dir else Path("recordings_output") / project_id
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    state_file = Path(__file__).parent / ".browser_state.json"
+    sessions_url = f"https://cloud.livekit.io/projects/{project_id}/sessions"
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
 
         ctx_kwargs = {}
-        if STATE_FILE.exists() and args.skip_login:
-            ctx_kwargs["storage_state"] = str(STATE_FILE)
-            print(f"Restoring session from {STATE_FILE}")
+        if state_file.exists():
+            ctx_kwargs["storage_state"] = str(state_file)
+            print(f"Found saved session, attempting to reuse...")
 
         context = browser.new_context(**ctx_kwargs)
         page = context.new_page()
 
-        # Login
-        if not args.skip_login:
-            login(page)
-            context.storage_state(path=str(STATE_FILE))
-            print(f"  Session saved → {STATE_FILE} (use --skip-login next run)\n")
+        # Navigate to sessions URL to check whether the saved session is still valid.
+        # If redirected to /login, the session is missing or expired — run the login flow.
+        page.goto(sessions_url, wait_until="domcontentloaded", timeout=20_000)
+
+        if "login" in page.url:
+            if state_file.exists():
+                print("Saved session expired, running login flow...\n")
+            login(page, project_id)
+            context.storage_state(path=str(state_file))
+            print(f"  Session saved → {state_file}\n")
         else:
-            # Verify the saved session is still valid
-            page.goto(SESSIONS_URL, wait_until="domcontentloaded", timeout=20_000)
-            if "login" in page.url:
-                print("Saved session expired. Re-run without --skip-login.")
-                browser.close()
-                sys.exit(1)
+            print("Session valid.\n")
+
+        if args.login_only:
+            print("--login-only: session ready. Exiting without downloading.")
+            browser.close()
+            return
 
         print("=" * 60)
         print("Scanning sessions and downloading recordings...")
@@ -524,7 +538,7 @@ def main():
         print("=" * 60 + "\n")
 
         http = requests.Session()
-        stats = collect_and_download(page, out_dir, http)
+        stats = collect_and_download(page, out_dir, http, project_id)
         browser.close()
 
     print("\n" + "=" * 60)
